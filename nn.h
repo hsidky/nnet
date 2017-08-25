@@ -53,8 +53,8 @@ public:
     /** Return activation of output layer. */
     matrix_t get_activation();
     
-    /** Get gradient of output(s) w.r.t. input(s) */
-    matrix_t get_gradient();
+    /** Get gradient of output(s) w.r.t. input i */
+    matrix_t get_gradient(int index);
     
     /** Returns the logistic function values f(x) given x. */
     static matrix_t activation(const matrix_t& x);

@@ -103,19 +103,19 @@ matrix_t neural_net::get_activation()
     return (layers_.back().a*y_scale_.asDiagonal().inverse()).rowwise() + y_shift_.transpose();
 }
 
-matrix_t neural_net::get_gradient()
+matrix_t neural_net::get_gradient(int index)
 {
-    layers_.back().delta = matrix_t::Ones(layers_.back().a.rows(), layers_.back().a.cols())*y_scale_.asDiagonal().inverse();
+    layers_.back().delta = matrix_t::Identity(layers_.back().size, layers_.back().size)*y_scale_.asDiagonal().inverse();
     for (size_t i = layers_.size() - 2; i > 0; --i) 
     {
         matrix_t g = activation_gradient(layers_[i].a);
-        layers_[i].delta = (layers_[i+1].delta*layers_[i+1].W).cwiseProduct(g);
+        layers_[i].delta = (layers_[i+1].delta*layers_[i+1].W)*g.row(index).asDiagonal();
     }
 
     return layers_[1].delta*layers_[1].W*x_scale_.asDiagonal();
 }
 
-matrix_t neural_net::activation(const matrix_t& x) 
+matrix_t neural_net::activation(const matrix_t& x)  
 {
     //return ((-x).array().exp() + 1.0).inverse().matrix();
     return x.array().tanh().matrix();
