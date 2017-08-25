@@ -69,11 +69,10 @@ public:
     void autoscale_reset();      
     
     /** Write net parameter to file. */
-    bool write(const char * filename);
+    bool write(const char* filename);
     
     /** Destructor. */
     ~neural_net();
-    
 };
 
 #endif

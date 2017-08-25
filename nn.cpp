@@ -7,7 +7,7 @@
 
 #include "nn.h"
 
-neural_net::neural_net(Eigen::VectorXi &topology) 
+neural_net::neural_net(Eigen::VectorXi& topology) 
 {
     assert(topology.size()>1);
     init_layers(topology);
@@ -50,7 +50,7 @@ neural_net::neural_net(const char* filename)
     file.close();
 }
 
-void neural_net::init_layers(Eigen::VectorXi &topology) 
+void neural_net::init_layers(Eigen::VectorXi& topology) 
 {
     // init input layer
     nn_layer l;
@@ -127,7 +127,7 @@ matrix_t neural_net::activation_gradient(const matrix_t& x)
     return (1.0-x.array()*x.array()).matrix();
 }
 
-void neural_net::autoscale(const matrix_t&X, const matrix_t &Y) 
+void neural_net::autoscale(const matrix_t& X, const matrix_t& Y) 
 {
     assert(layers_.front().size == X.cols());
     assert(layers_.back().size == Y.cols());
@@ -156,7 +156,7 @@ void neural_net::autoscale_reset()
     y_shift_ = vector_t::Zero(layers_.back().size);
 }
 
-bool neural_net::write(const char *filename) 
+bool neural_net::write(const char* filename) 
 {
     // open file
     std::ofstream file(filename, std::ios::out);
@@ -182,7 +182,7 @@ bool neural_net::write(const char *filename)
         file << y_scale_[y_scale_.size()-1] << std::endl;
 
         for(int i = 0; i < y_shift_.size() - 1; ++i) file << y_shift_[i] << " ";
-            file << y_shift_[y_shift_.size()-1] << std::endl;
+        file << y_shift_[y_shift_.size()-1] << std::endl;
         
         // weights
         for (int i = 1; i < layers_.size(); ++i) 
