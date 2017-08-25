@@ -7,227 +7,226 @@
 
 #include "nn.h"
 
-
-// default parameters for Rprop
-const RpropParams NeuralNet::p = {0.1, 50, 1e-6, 0.5, 1.2};
-
-NeuralNet::NeuralNet(Eigen::VectorXi &topology) {
-  assert(topology.size()>1);
-  init_layer(topology);
-  init_weights(0.5);
-  autoscale_reset();
-}
-
-NeuralNet::NeuralNet(const char *filename) {
-  std::ifstream fs(filename, std::ios::in | std::ios::binary);
-  if (fs) {
-    // number of layers
-    int num_layers;
-    fs.read((char *)&num_layers, sizeof(int));
-    Eigen::VectorXi topology(num_layers);
-    // topology
-    fs.read((char *) topology.data(), topology.rows() * sizeof(int) );
-    init_layer(topology);
+neural_net::neural_net(Eigen::VectorXi &topology) 
+{
+    assert(topology.size()>1);
+    init_layers(topology);
+    init_weights(0.5);
     autoscale_reset();
-    // scaling parameters
-    fs.read((char *) Xscale.data(), Xscale.size() * sizeof(F_TYPE));
-    fs.read((char *) Xshift.data(), Xshift.size() * sizeof(F_TYPE));
-    fs.read((char *) Yscale.data(), Yscale.size() * sizeof(F_TYPE));
-    fs.read((char *) Yshift.data(), Yshift.size() * sizeof(F_TYPE));
-    // weights
-    for (int i=1; i<layer.size(); ++i) {
-      fs.read((char *) layer[i].W.data(), layer[i].W.rows() * layer[i].W.cols() * sizeof(F_TYPE));
-      fs.read((char *) layer[i].b.data(), layer[i].b.size() * sizeof(F_TYPE));
+}
+
+neural_net::neural_net(const char* filename) 
+{
+    std::ifstream file(filename, std::ios::in);
+    if(file) 
+    { 
+        // number of layers
+        int num_layers;
+        file >> num_layers; 
+        Eigen::VectorXi topology(num_layers);
+        
+        // topology
+        for(int i = 0; i < topology.rows(); ++i)
+            file >> topology[i];
+        init_layers(topology);
+        autoscale_reset();
+        
+        // scaling parameters
+        for(int i = 0; i < x_scale_.size(); ++i) file >> x_scale_[i];
+        for(int i = 0; i < x_shift_.size(); ++i) file >> x_shift_[i];
+        for(int i = 0; i < y_scale_.size(); ++i) file >> y_scale_[i];
+        for(int i = 0; i < y_shift_.size(); ++i) file >> y_shift_[i];
+        
+        // weights
+        for (int i = 1; i < layers_.size(); ++i) 
+        {
+            auto& layer = layers_[i];
+            for(int j = 0; j < layer.W.size(); ++j) file >> layer.W(j);
+            for(int j = 0; j < layer.b.size(); ++j) file >> layer.b(j);
+        }
     }
-  }
+    
+    file.close();
 }
 
-void NeuralNet::init_layer(Eigen::VectorXi &topology) {
-  // init input layer
-  Layer l;
-  l.size = topology(0);
-  layer.push_back(l);
-  // init hidden and output layer
-  for (int i=1; i<topology.size(); ++i) {
-    Layer l;
-    l.size  = topology(i);    
-    l.W.setZero(l.size, layer[i-1].size);    
-    l.b.setZero(l.size);
-    l.dEdW.setZero(l.size, layer[i-1].size);
-    l.dEdb.setZero(l.size);
-    // set initial Delta
-    l.DeltaW.resize(l.size, layer[i-1].size);
-    l.Deltab.resize(l.size);    
-    l.DeltaW.setConstant(p.Delta_0);
-    l.Deltab.setConstant(p.Delta_0);
-    layer.push_back(l);
-  }  
+void neural_net::init_layers(Eigen::VectorXi &topology) 
+{
+    // init input layer
+    nn_layer l;
+    l.size = topology(0);
+    layers_.push_back(l);
+    // init hidden and output layer
+    for (int i = 1; i < topology.size(); ++i) 
+    {
+        nn_layer l;
+        l.size  = topology(i);    
+        l.W.setZero(l.size, layers_[i-1].size);    
+        l.b.setZero(l.size);
+        l.dEdW.setZero(l.size, layers_[i-1].size);
+        l.dEdb.setZero(l.size);
+        layers_.push_back(l);
+    }  
 }
 
-void NeuralNet::init_weights(F_TYPE sd) {
-  for (int i=1; i<layer.size(); ++i) {
-    layer[i].W.setRandom();
-    layer[i].b.setRandom();
-    layer[i].W *= sd;
-    layer[i].b *= sd;
-  }
-}
-
-NeuralNet::~NeuralNet() {
-}
-
-F_TYPE NeuralNet::loss(const matrix_t &X, const matrix_t &Y, F_TYPE lambda) {
-  assert(layer.front().size == X.cols());
-  assert(layer.back().size == Y.cols());
-  assert(X.rows() == Y.rows());
-  // number of samples
-  size_t m = X.rows();
-  // forward pass
-  forward_pass(X);
-  // compute error
-  matrix_t error = layer.back().a - ((Y.rowwise()-Yshift.transpose()) * Yscale.asDiagonal());
-  // compute cost
-  F_TYPE J = 0.5*error.rowwise().squaredNorm().mean();
-  // compute delta  
-  layer.back().delta = (error.array() * sigmoid_gradient(layer.back().a).array()).matrix();
-  for (size_t i=layer.size()-2; i>0; --i) {
-    matrix_t g = sigmoid_gradient(layer[i].a);
-    layer[i].delta = (layer[i+1].delta * layer[i+1].W).cwiseProduct(g);
-  }
-  // compute partial derivatives and RPROP parameters
-  for (int i=1; i<layer.size(); ++i) {
-    // add regularization to weights, bias weights are not regularized
-    J += 0.5 * lambda * layer[i].W.array().square().sum() / m;
-    matrix_t dEdW = (layer[i].delta.transpose() * layer[i-1].a + lambda*layer[i].W) / m;
-    vector_t dEdb = layer[i].delta.colwise().sum().transpose() / m;
-    layer[i].directionW = layer[i].dEdW.cwiseProduct(dEdW);
-    layer[i].directionb = layer[i].dEdb.cwiseProduct(dEdb);
-    layer[i].dEdW = dEdW;
-    layer[i].dEdb = dEdb;
-  }
-  return J;
-}
-
-void NeuralNet::rprop() {
-  for (int i=1; i<layer.size(); ++i) {
-    for (int j=0; j<layer[i].size; ++j) {
-      for (int k=0; k<layer[i-1].size; ++k) {
-        F_TYPE u = rprop_update(layer[i].directionW(j,k), layer[i].DeltaW(j,k), layer[i].dEdW(j,k));
-        layer[i].W(j,k) += u;
-      }
-      layer[i].b(j) += rprop_update(layer[i].directionb(j), layer[i].Deltab(j), layer[i].dEdb(j));
+void neural_net::init_weights(F_TYPE sd) 
+{
+    for (int i = 1; i < layers_.size(); ++i) 
+    {
+        layers_[i].W.setRandom();
+        layers_[i].b.setRandom();
+        layers_[i].W *= sd;
+        layers_[i].b *= sd;
     }
-  }
 }
 
-F_TYPE NeuralNet::rprop_update(F_TYPE &direction, F_TYPE &Delta, F_TYPE grad) {
-  if (direction > 0) {
-    Delta = std::min(Delta * p.eta_plus, p.Delta_max);
-    direction = grad;
-    if (grad > 0) return -Delta;
-    else return Delta;
-  } else if (direction < 0) {
-    Delta = std::max(Delta * p.eta_minus, p.Delta_min);
-    direction = 0;
-    return 0;
-  } else {
-    direction = grad;
-    if (grad > 0) return -Delta;
-    else return Delta;
-  }
-}
+/*
+F_TYPE neural_net::loss(const matrix_t& X, const matrix_t& Y, F_TYPE lambda) 
+{
+    // Size matching asserts.
+    assert(layers_.front().size == X.cols());
+    assert(layers_.back().size == Y.cols());
+    assert(X.rows() == Y.rows());
 
-void NeuralNet::rprop_reset() {
-  for (int i=1; i<layer.size(); ++i) {
-    layer[i].dEdW.setZero();
-    layer[i].dEdb.setZero();
-    layer[i].DeltaW.setConstant(p.Delta_0);
-    layer[i].Deltab.setConstant(p.Delta_0);
-  }
-}
+    // number of samples
+    size_t m = X.rows();
 
-void NeuralNet::forward_pass(const matrix_t &X) {
-  assert(layer.front().size == X.cols());
-  // copy and scale data matrix
-  layer[0].a = (X.rowwise()-Xshift.transpose()) * Xscale.asDiagonal();
-  for (int i=1; i<layer.size(); ++i) {
-    // compute input for current layer
-    layer[i].z = layer[i-1].a * layer[i].W.transpose();
-    // add bias
-    layer[i].z.rowwise() += layer[i].b.transpose(); 
-    // apply activation function
-    layer[i].a = sigmoid(layer[i].z);
-  }
-}
+    // forward pass
+    forward_pass(X);
 
-matrix_t NeuralNet::get_activation() {
-  return (layer.back().a * Yscale.asDiagonal().inverse()).rowwise() + Yshift.transpose();
-}
-
-matrix_t NeuralNet::sigmoid(const matrix_t &x) {
-  return ((-x).array().exp() + 1.0).inverse().matrix();
-}
-
-matrix_t NeuralNet::sigmoid_gradient(const matrix_t &x) {
-  return x.cwiseProduct((1.0-x.array()).matrix());
-}
-
-void NeuralNet::gradient_descent(F_TYPE alpha) {
-  for (int i=1; i<layer.size(); ++i) {
-    layer[i].W -= alpha*layer[i].dEdW;
-    layer[i].b -= alpha*layer[i].dEdb;
-  }
-}
-
-bool NeuralNet::write(const char *filename) {
-  // open file
-  std::ofstream fs(filename, std::ios::out | std::ios::binary);
-  // write everything to disk
-  if (fs) {
-    // number of layers
-    int num_layers = layer.size();
-    fs.write((char *)&num_layers, sizeof(int));
-    // topology
-    for (int i=0; i<layer.size(); ++i) {
-      int num_units = layer[i].size;
-      fs.write((char *) &num_units, sizeof(int));
+    // compute error
+    matrix_t error = layers_.back().a - ((Y.rowwise() - y_shift_.transpose())*y_scale_.asDiagonal());
+    // compute cost
+    F_TYPE J = 0.5*error.rowwise().squaredNorm().mean();
+    
+    // compute delta  
+    layers_.back().delta = (error.array() * activation_gradient(layers_.back().a).array()).matrix();
+    for (size_t i=layers_.size()-2; i>0; --i) {
+        matrix_t g = activation_gradient(layers_[i].a);
+        layers_[i].delta = (layers_[i+1].delta * layers_[i+1].W).cwiseProduct(g);
     }
-    // scaling parameters
-    fs.write((char *) Xscale.data(), Xscale.size() * sizeof(F_TYPE));
-    fs.write((char *) Xshift.data(), Xshift.size() * sizeof(F_TYPE));
-    fs.write((char *) Yscale.data(), Yscale.size() * sizeof(F_TYPE));
-    fs.write((char *) Yshift.data(), Yshift.size() * sizeof(F_TYPE));
-    // weights
-    for (int i=1; i<layer.size(); ++i) {
-      fs.write((char *) layer[i].W.data(), layer[i].W.rows() * layer[i].W.cols() * sizeof(F_TYPE));
-      fs.write((char *) layer[i].b.data(), layer[i].b.size() * sizeof(F_TYPE));
+    // compute partial derivatives and RPROP parameters
+    for (int i=1; i<layers_.size(); ++i) {
+        // add regularization to weights, bias weights are not regularized
+        J += 0.5 * lambda * layers_[i].W.array().square().sum() / m;
+        matrix_t dEdW = (layers_[i].delta.transpose() * layers_[i-1].a + lambda*layers_[i].W) / m;
+        vector_t dEdb = layers_[i].delta.colwise().sum().transpose() / m;
+        layers_[i].directionW = layers_[i].dEdW.cwiseProduct(dEdW);
+        layers_[i].directionb = layers_[i].dEdb.cwiseProduct(dEdb);
+        layers_[i].dEdW = dEdW;
+        layers_[i].dEdb = dEdb;
     }
-  } else {
-    return false;
-  }
-  fs.close();
-  return true;
+    return J;
+}
+*/
+
+void neural_net::forward_pass(const matrix_t& X) 
+{
+    assert(layers_.front().size == X.cols());
+    
+    // copy and scale data matrix
+    layers_[0].a = (X.rowwise() - x_shift_.transpose())*x_scale_.asDiagonal();
+
+    for (int i = 1; i < layers_.size(); ++i) 
+    {
+        // compute input for current layer
+        layers_[i].z = layers_[i-1].a * layers_[i].W.transpose();
+        
+        // add bias
+        layers_[i].z.rowwise() += layers_[i].b.transpose(); 
+        
+        // apply activation function
+        layers_[i].a = activation(layers_[i].z);
+    }
 }
 
-void NeuralNet::autoscale(const matrix_t &X, const matrix_t &Y) {
-  assert(layer.front().size == X.cols());
-  assert(layer.back().size == Y.cols());
-  assert(X.rows() == Y.rows());
-  // compute the mean of the input data
-  Xshift = X.colwise().mean();
-  // compute the standard deviation of the input data
-  Xscale = (X.rowwise()-Xshift.transpose()).array().square().colwise().mean().array().sqrt().inverse();
-  for (size_t i=0; i<Xscale.size(); ++i) if (Xscale(i) > 10e9) Xscale(i) = 1;
-  // compute the minimum target values
-  Yshift = Y.colwise().minCoeff();
-  // compute the maximum shifted target values
-  Yscale = (Y.colwise().maxCoeff() - Yshift.transpose()).array().inverse();
-  for (size_t i=0; i<Yscale.size(); ++i) if (Yscale(i) > 10e9) Yscale(i) = 1;
+matrix_t neural_net::get_activation() 
+{
+    return (layers_.back().a*y_scale_.asDiagonal().inverse()).rowwise() + y_shift_.transpose();
 }
 
-void NeuralNet::autoscale_reset() {
-  Xscale = vector_t::Ones(layer.front().size);
-  Xshift = vector_t::Zero(layer.front().size);
-  Yscale = vector_t::Ones(layer.back().size);
-  Yshift = vector_t::Zero(layer.back().size);
+matrix_t neural_net::activation(const matrix_t& x) 
+{
+    return ((-x).array().exp() + 1.0).inverse().matrix();
 }
+
+matrix_t neural_net::activation_gradient(const matrix_t &x) 
+{
+    return x.cwiseProduct((1.0-x.array()).matrix());
+}
+
+void neural_net::autoscale(const matrix_t&X, const matrix_t &Y) 
+{
+    assert(layers_.front().size == X.cols());
+    assert(layers_.back().size == Y.cols());
+    assert(X.rows() == Y.rows());
+    
+    // compute the mean of the input data
+    x_shift_ = X.colwise().mean();
+    
+    // compute the standard deviation of the input data
+    x_scale_ = (X.rowwise() - x_shift_.transpose()).array().square().colwise().mean().array().sqrt().inverse();
+    for (size_t i = 0; i < x_scale_.size(); ++i) if (x_scale_(i) > 10e9) x_scale_(i) = 1;
+    
+    // compute the minimum target values
+    y_shift_ = Y.colwise().minCoeff();
+    
+    // compute the maximum shifted target values
+    y_scale_ = (Y.colwise().maxCoeff() - y_shift_.transpose()).array().inverse();
+    for (size_t i = 0; i < y_scale_.size(); ++i) if (y_scale_(i) > 10e9) y_scale_(i) = 1;
+}
+
+void neural_net::autoscale_reset() 
+{
+    x_scale_ = vector_t::Ones(layers_.front().size);
+    x_shift_ = vector_t::Zero(layers_.front().size);
+    y_scale_ = vector_t::Ones(layers_.back().size);
+    y_shift_ = vector_t::Zero(layers_.back().size);
+}
+
+bool neural_net::write(const char *filename) 
+{
+    // open file
+    std::ofstream file(filename, std::ios::out);
+    
+    // write everything to disk
+    if (file) 
+    {
+        // number of layers
+        file << static_cast<int>(layers_.size()) << std::endl;
+        
+        // topology
+        for (int i = 0; i < layers_.size() - 1; ++i) 
+            file << static_cast<int>(layers_[i].size) << " ";
+        file << static_cast<int>(layers_.back().size) << std::endl;
+
+        for(int i = 0; i < x_scale_.size() - 1; ++i) file << x_scale_[i] << " ";
+        file << x_scale_[x_scale_.size()-1] << std::endl;
+
+        for(int i = 0; i < x_shift_.size() - 1; ++i) file << x_shift_[i] << " ";
+        file << x_shift_[x_shift_.size()-1] << std::endl;
+
+        for(int i = 0; i < y_scale_.size() - 1; ++i) file << y_scale_[i] << " ";
+        file << y_scale_[y_scale_.size()-1] << std::endl;
+
+        for(int i = 0; i < y_shift_.size() - 1; ++i) file << y_shift_[i] << " ";
+            file << y_shift_[y_shift_.size()-1] << std::endl;
+        
+        // weights
+        for (int i = 1; i < layers_.size(); ++i) 
+        {
+            auto& layer = layers_[i];
+            for(int j = 0; j < layer.W.size(); ++j) file << layer.W(j) << std::endl;
+            for(int j = 0; j < layer.b.size(); ++j) file << layer.b(j) << std::endl;
+        }
+    } 
+    else
+        return false;
+    
+    file.close();
+    return true;
+}
+
+neural_net::~neural_net() 
+{
+}
+
