@@ -17,8 +17,8 @@ struct nn_layer
 {
     size_t size;
     matrix_t a, z, delta;
-    matrix_t W, dEdW;
-    vector_t b, dEdb;
+    matrix_t W;
+    vector_t b;
 };
 
 class neural_net 
@@ -48,7 +48,7 @@ public:
     
     /** Propagate data through the net.
     *  Rows of X are instances, columns are features. */
-    void forward_pass(const matrix_t &X);
+    void forward_pass(const matrix_t& X);
     
     /** Return activation of output layer. */
     matrix_t get_activation();
@@ -57,13 +57,13 @@ public:
     matrix_t get_gradient();
     
     /** Returns the logistic function values f(x) given x. */
-    static matrix_t activation(const matrix_t &x);
+    static matrix_t activation(const matrix_t& x);
     
     /** Returns the gradient f'(x) of the logistic function given f(x). */
-    static matrix_t activation_gradient(const matrix_t &x);
+    static matrix_t activation_gradient(const matrix_t& x);
     
     /** Compute autoscale parameters. */
-    void autoscale(const matrix_t &X, const matrix_t &Y);
+    void autoscale(const matrix_t& X, const matrix_t& Y);
     
     /** Reset autoscale parameters */
     void autoscale_reset();      

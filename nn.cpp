@@ -26,8 +26,9 @@ neural_net::neural_net(const char* filename)
         Eigen::VectorXi topology(num_layers);
         
         // topology
-        for(int i = 0; i < topology.rows(); ++i)
+        for(int i = 0; i < topology.size(); ++i)
             file >> topology[i];
+        
         init_layers(topology);
         autoscale_reset();
         
@@ -41,8 +42,8 @@ neural_net::neural_net(const char* filename)
         for (int i = 1; i < layers_.size(); ++i) 
         {
             auto& layer = layers_[i];
-            for(int j = 0; j < layer.W.size(); ++j) file >> layer.W(j);
             for(int j = 0; j < layer.b.size(); ++j) file >> layer.b(j);
+            for(int j = 0; j < layer.W.size(); ++j) file >> layer.W(j);
         }
     }
     
@@ -62,8 +63,6 @@ void neural_net::init_layers(Eigen::VectorXi &topology)
         l.size  = topology(i);    
         l.W.setZero(l.size, layers_[i-1].size);    
         l.b.setZero(l.size);
-        l.dEdW.setZero(l.size, layers_[i-1].size);
-        l.dEdb.setZero(l.size);
         layers_.push_back(l);
     }  
 }
@@ -79,54 +78,13 @@ void neural_net::init_weights(F_TYPE sd)
     }
 }
 
-/*
-F_TYPE neural_net::loss(const matrix_t& X, const matrix_t& Y, F_TYPE lambda) 
-{
-    // Size matching asserts.
-    assert(layers_.front().size == X.cols());
-    assert(layers_.back().size == Y.cols());
-    assert(X.rows() == Y.rows());
-
-    // number of samples
-    size_t m = X.rows();
-
-    // forward pass
-    forward_pass(X);
-
-    // compute error
-    matrix_t error = layers_.back().a - ((Y.rowwise() - y_shift_.transpose())*y_scale_.asDiagonal());
-    // compute cost
-    F_TYPE J = 0.5*error.rowwise().squaredNorm().mean();
-    
-    // compute delta  
-    layers_.back().delta = (error.array() * activation_gradient(layers_.back().a).array()).matrix();
-    for (size_t i=layers_.size()-2; i>0; --i) {
-        matrix_t g = activation_gradient(layers_[i].a);
-        layers_[i].delta = (layers_[i+1].delta * layers_[i+1].W).cwiseProduct(g);
-    }
-    // compute partial derivatives and RPROP parameters
-    for (int i=1; i<layers_.size(); ++i) {
-        // add regularization to weights, bias weights are not regularized
-        J += 0.5 * lambda * layers_[i].W.array().square().sum() / m;
-        matrix_t dEdW = (layers_[i].delta.transpose() * layers_[i-1].a + lambda*layers_[i].W) / m;
-        vector_t dEdb = layers_[i].delta.colwise().sum().transpose() / m;
-        layers_[i].directionW = layers_[i].dEdW.cwiseProduct(dEdW);
-        layers_[i].directionb = layers_[i].dEdb.cwiseProduct(dEdb);
-        layers_[i].dEdW = dEdW;
-        layers_[i].dEdb = dEdb;
-    }
-    return J;
-}
-*/
-
 void neural_net::forward_pass(const matrix_t& X) 
 {
     assert(layers_.front().size == X.cols());
     
     // copy and scale data matrix
     layers_[0].a = (X.rowwise() - x_shift_.transpose())*x_scale_.asDiagonal();
-
-    for (int i = 1; i < layers_.size(); ++i) 
+    for (int i = 1; i < layers_.size(); ++i)
     {
         // compute input for current layer
         layers_[i].z = layers_[i-1].a * layers_[i].W.transpose();
@@ -135,7 +93,8 @@ void neural_net::forward_pass(const matrix_t& X)
         layers_[i].z.rowwise() += layers_[i].b.transpose(); 
         
         // apply activation function
-        layers_[i].a = activation(layers_[i].z);
+        bool end = (i >= layers_.size() - 1);
+        layers_[i].a = end ? layers_[i].z : activation(layers_[i].z);
     }
 }
 
@@ -144,14 +103,28 @@ matrix_t neural_net::get_activation()
     return (layers_.back().a*y_scale_.asDiagonal().inverse()).rowwise() + y_shift_.transpose();
 }
 
-matrix_t neural_net::activation(const matrix_t& x) 
+matrix_t neural_net::get_gradient()
 {
-    return ((-x).array().exp() + 1.0).inverse().matrix();
+    layers_.back().delta = matrix_t::Ones(layers_.back().a.rows(), layers_.back().a.cols())*y_scale_.asDiagonal().inverse();
+    for (size_t i = layers_.size() - 2; i > 0; --i) 
+    {
+        matrix_t g = activation_gradient(layers_[i].a);
+        layers_[i].delta = (layers_[i+1].delta*layers_[i+1].W).cwiseProduct(g);
+    }
+
+    return layers_[1].delta*layers_[1].W*x_scale_.asDiagonal();
 }
 
-matrix_t neural_net::activation_gradient(const matrix_t &x) 
+matrix_t neural_net::activation(const matrix_t& x) 
 {
-    return x.cwiseProduct((1.0-x.array()).matrix());
+    //return ((-x).array().exp() + 1.0).inverse().matrix();
+    return x.array().tanh().matrix();
+}
+
+matrix_t neural_net::activation_gradient(const matrix_t& x) 
+{
+    //return x.cwiseProduct((1.0-x.array()).matrix());
+    return (1.0-x.array()*x.array()).matrix();
 }
 
 void neural_net::autoscale(const matrix_t&X, const matrix_t &Y) 
@@ -215,8 +188,8 @@ bool neural_net::write(const char *filename)
         for (int i = 1; i < layers_.size(); ++i) 
         {
             auto& layer = layers_[i];
-            for(int j = 0; j < layer.W.size(); ++j) file << layer.W(j) << std::endl;
             for(int j = 0; j < layer.b.size(); ++j) file << layer.b(j) << std::endl;
+            for(int j = 0; j < layer.W.size(); ++j) file << layer.W(j) << std::endl;
         }
     } 
     else
