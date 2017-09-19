@@ -17,8 +17,8 @@ struct nn_layer
 {
     size_t size;
     matrix_t a, z, delta;
-    matrix_t W;
-    vector_t b;
+    matrix_t W, dEdW, DeltaW;
+    vector_t b, dEdb, Delab;
 };
 
 class neural_net 
@@ -29,7 +29,14 @@ protected:
     
     /** Holds the layers of the neural net. */
     std::vector<nn_layer> layers_;
-    
+
+    /** Holds the error gradient, jacobian, ... */ 
+    matrix_t j_, jj_;
+    vector_t je_;
+
+    /** Number of adjustable parameters. */
+    uint nparam_;
+
     /** Scaling parameters. */
     vector_t x_shift_;
     vector_t x_scale_;
@@ -49,6 +56,11 @@ public:
     /** Propagate data through the net.
     *  Rows of X are instances, columns are features. */
     void forward_pass(const matrix_t& X);
+
+    /** Compute NN loss w.r.t. input and output data.
+      * Also backpropogates error. 
+      */
+    F_TYPE loss(const matrix_t& X, const matrix_t& Y);
     
     /** Return activation of output layer. */
     matrix_t get_activation();

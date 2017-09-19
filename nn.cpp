@@ -53,6 +53,7 @@ neural_net::neural_net(const char* filename)
 void neural_net::init_layers(Eigen::VectorXi& topology) 
 {
     // init input layer
+    nparam_ = 0; 
     nn_layer l;
     l.size = topology(0);
     layers_.push_back(l);
@@ -64,7 +65,8 @@ void neural_net::init_layers(Eigen::VectorXi& topology)
         l.W.setZero(l.size, layers_[i-1].size);    
         l.b.setZero(l.size);
         layers_.push_back(l);
-    }  
+        nparam_ += l.W.size() + l.b.size();
+    }
 }
 
 void neural_net::init_weights(F_TYPE sd) 
@@ -98,6 +100,65 @@ void neural_net::forward_pass(const matrix_t& X)
     }
 }
 
+F_TYPE neural_net::loss(const matrix_t& X, const matrix_t& Y)
+{
+    assert(layers_.front().size == X.cols());
+    assert(layers_.back().size == Y.cols());
+    assert(X.rows() == Y.rows());
+    
+    // number of samples
+    size_t Q = X.rows();
+    
+    // Resize jacobian. 
+    je_.resize(nparam_);
+    j_.resize(Q, nparam_);
+    
+    // MSE. 
+    F_TYPE mse = 0.;
+    
+    for(size_t k = 0; k < Q; ++k)
+    {
+        // forward pass
+        forward_pass(X.row(k));
+            
+        // compute error
+        matrix_t error = layers_.back().a*y_scale_.asDiagonal().inverse() - (Y.row(k) - y_shift_.transpose());
+        
+        // Compute loss. 
+        mse += error.rowwise().squaredNorm().mean()/X.cols();
+        
+        // Number of layers. 
+        size_t m = layers_.size();
+
+        // Compute sensitivities. 
+        size_t j = nparam_;
+        layers_[m-1].delta = error*y_scale_.asDiagonal().inverse();
+        layers_[m-1].dEdW = (layers_[m-1].delta.transpose() * layers_[m-2].a);
+        layers_[m-1].dEdb = layers_[m-1].delta.colwise().sum().transpose();
+
+        // Pack gradient.
+        j -= layers_[m-1].W.size();
+        je_.segment(j, layers_[m-1].W.size()) = layers_[m-1].dEdW;
+        j -= layers_[m-1].b.size();
+        je_.segment(j, layers_[m-1].b.size()) = layers_[m-1].dEdb;
+
+        for(size_t i = layers_.size() - 2; i > 0; --i)
+        {
+            layers_[i].delta = (layers_[i+1].delta*layers_[i+1].W).cwiseProduct(activation_gradient(layers_[i].a));
+            layers_[i].dEdW = layers_[i].delta.transpose()*layers_[i-1].a;
+            layers_[i].dEdb = layers_[i].delta.colwise().sum().transpose();
+
+            // Pack gradient.
+            j -= layers_[i].W.size();
+            je_.segment(j, layers_[i].W.size()) = layers_[i].dEdW;
+            j -= layers_[i].b.size();
+            je_.segment(j, layers_[i].b.size()) = layers_[i].dEdb;
+        }
+    }
+    std::cout << j_.transpose()*j_ << std::endl;
+    return mse/Q;
+}
+
 matrix_t neural_net::get_activation() 
 {
     return (layers_.back().a*y_scale_.asDiagonal().inverse()).rowwise() + y_shift_.transpose();
@@ -117,6 +178,7 @@ matrix_t neural_net::get_gradient(int index)
 
 matrix_t neural_net::activation(const matrix_t& x)  
 {
+    return (2.*((-2.*x).array().exp() + 1.0).inverse() - 1.0).matrix();
     //return ((-x).array().exp() + 1.0).inverse().matrix();
     return x.array().tanh().matrix();
 }
@@ -166,7 +228,7 @@ bool neural_net::write(const char* filename)
     {
         // number of layers
         file << static_cast<int>(layers_.size()) << std::endl;
-        
+
         // topology
         for (int i = 0; i < layers_.size() - 1; ++i) 
             file << static_cast<int>(layers_[i].size) << " ";
