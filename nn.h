@@ -4,21 +4,21 @@
 #ifndef __NN_H__
 #define __NN_H__
 
-#define F_TYPE double
+#define f_type double
 
 #include <Eigen/Core>
 #include <vector>
 
-typedef Eigen::Matrix<F_TYPE, Eigen::Dynamic, Eigen::Dynamic> matrix_t;
-typedef Eigen::Matrix<F_TYPE, Eigen::Dynamic, 1> vector_t;
-typedef Eigen::Array<F_TYPE, Eigen::Dynamic, Eigen::Dynamic> array_t;
+typedef Eigen::Matrix<f_type, Eigen::Dynamic, Eigen::Dynamic> matrix_t;
+typedef Eigen::Matrix<f_type, Eigen::Dynamic, 1> vector_t;
+typedef Eigen::Array<f_type, Eigen::Dynamic, Eigen::Dynamic> array_t;
 
 struct nn_layer 
 {
     size_t size;
     matrix_t a, z, delta;
-    matrix_t W, dEdW, DeltaW, dEdb;
-    vector_t b, Delab;
+    matrix_t W, dEdW;
+    vector_t b;
 };
 
 struct train_param
@@ -29,12 +29,15 @@ struct train_param
 
 class neural_net 
 {
-protected:
+private:
     /** Allocate memory and initialize default values. */
     void init_layers(Eigen::VectorXi &topology);
     
     /** Holds the layers of the neural net. */
     std::vector<nn_layer> layers_;
+
+    /** Training params. */
+    train_param tparams_;
 
     /** Holds the error gradient, jacobian, ... */ 
     matrix_t j_, jj_;
@@ -57,7 +60,7 @@ public:
     neural_net(const char* filename);
 
     /** Initial weights randomly (zero mean, standard deviation sd) . */
-    void init_weights(F_TYPE sd);
+    void init_weights(f_type sd);
     
     /** Propagate data through the net.
     *  Rows of X are instances, columns are features. */
@@ -66,9 +69,9 @@ public:
     /** Compute NN loss w.r.t. input and output data.
       * Also backpropogates error. 
       */
-    F_TYPE loss(const matrix_t& X, const matrix_t& Y);
+    f_type loss(const matrix_t& X, const matrix_t& Y);
 
-    bool train(const matrix_t& X, const matrix_t& Y);
+    void train(const matrix_t& X, const matrix_t& Y, bool verbose = false);
 
     /** Return activation of output layer. */
     matrix_t get_activation();

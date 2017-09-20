@@ -4,6 +4,8 @@
 #include <iostream>
 #include <fstream>
 #include <assert.h>
+#include <Eigen/Dense>
+#include <Eigen/Cholesky>
 
 #include "nn.h"
 
@@ -71,7 +73,7 @@ void neural_net::init_layers(Eigen::VectorXi& topology)
     }
 }
 
-void neural_net::init_weights(F_TYPE sd) 
+void neural_net::init_weights(f_type sd) 
 {
     for (int i = 1; i < layers_.size(); ++i) 
     {
@@ -102,22 +104,23 @@ void neural_net::forward_pass(const matrix_t& X)
     }
 }
 
-F_TYPE neural_net::loss(const matrix_t& X, const matrix_t& Y)
+f_type neural_net::loss(const matrix_t& X, const matrix_t& Y)
 {
     assert(layers_.front().size == X.cols());
     assert(layers_.back().size == Y.cols());
     assert(X.rows() == Y.rows());
     
     // number of samples and output dim. 
-    size_t Q = X.rows();
+    size_t Q = Y.rows();
     size_t S = Y.cols();
     
-    // Resize jacobian. 
+    // Resize jacobian and define error. 
     je_.resize(nparam_);
     j_.resize(S*Q, nparam_);
+    vector_t error(S*Q);
     
     // MSE. 
-    F_TYPE mse = 0.;
+    f_type mse = 0.;
     
     for(size_t k = 0; k < Q; ++k)
     {
@@ -125,10 +128,10 @@ F_TYPE neural_net::loss(const matrix_t& X, const matrix_t& Y)
         forward_pass(X.row(k));
             
         // compute error
-        matrix_t error = layers_.back().a*y_scale_.asDiagonal().inverse() - (Y.row(k) - y_shift_.transpose());
+        error.row(k) = layers_.back().a*y_scale_.asDiagonal().inverse() - (Y.row(k) - y_shift_.transpose());
         
         // Compute loss. 
-        mse += error.rowwise().squaredNorm().mean()/S;
+        mse += error.row(k).rowwise().squaredNorm().mean()/S;
         
         // Number of layers. 
         size_t m = layers_.size();
@@ -165,7 +168,72 @@ F_TYPE neural_net::loss(const matrix_t& X, const matrix_t& Y)
         }
     }
 
+    jj_ = j_.transpose()*j_;
+    jj_ /= (Q*S);
+    j_ /= (Q*S);
+    je_ = j_.transpose()*error;
     return mse/Q;
+}
+
+void neural_net::train(const matrix_t& X, const matrix_t& Y, bool verbose)
+{
+    tparams_ = {0.005, 1.e10, 10.0, 1.e-7, 1000};
+
+    int nex = X.rows();
+    
+    // Forward and back propogate to compute loss and Jacobian.
+    f_type mse = loss(X, Y);
+    vector_t wb = get_wb(), optwb = get_wb();
+    f_type wse = wb.transpose()*wb;
+
+    // Initialize Bayesian regularization parameters.
+    f_type gamma = nparam_;
+    f_type beta = 0.5*(nex - gamma)/mse;
+    beta = beta <= 0 ? 1 : beta;
+    f_type alpha = 0.5*gamma/wse;
+    f_type tse = beta*mse + alpha*wse;
+    f_type grad = 2.*std::sqrt(je_.squaredNorm());
+    matrix_t eye = matrix_t::Identity(nparam_, nparam_);
+    
+    // Define iteration tol parameters.
+    int iter = 0;
+    f_type tse2 = 0, mse2 = 0, wse2 = 0;
+    do
+    {
+        if(verbose)
+            std::cout << "iter: " << iter << " mse: " << mse << " gamma: " << gamma << " mu: " << tparams_.mu << " grad: " << grad << std::endl;
+
+            // Update LM and Bayesian params. 
+        tparams_.mu /= tparams_.mu_scale;
+        if(tparams_.mu < 1.e-20) tparams_.mu = 1.e-20;
+
+        do
+        {
+            tparams_.mu *= tparams_.mu_scale;
+            // Compute new weights and performance.
+            optwb = wb - (beta*jj_ + (tparams_.mu + alpha)*eye).ldlt().solve(beta*je_ + alpha*wb);
+            wse2 = optwb.transpose()*optwb;
+            set_wb(optwb);
+            mse2 = loss(X, Y);
+            tse2 = beta*mse2 + alpha*wse2;
+        }while(tse2 >= tse && tparams_.mu < tparams_.mu_max);
+
+        wb = optwb;
+        mse = mse2; wse = wse2;
+        gamma = (f_type)nparam_ - alpha*(beta*jj_ + alpha*eye).inverse().trace();
+        beta = mse == 0 ? 1. : 0.5*(nex - gamma)/mse;
+        alpha = wse == 0 ? 1. : 0.5*gamma/wse;
+        tse = beta*mse + alpha*wse;
+        grad = 2.*std::sqrt(je_.squaredNorm());
+        tparams_.mu /= tparams_.mu_scale;
+        if(tparams_.mu < 1.e-20) tparams_.mu = 1.e-20;
+
+
+        ++iter;        
+    }while(tparams_.mu < tparams_.mu_max && grad > tparams_.min_grad && iter <= tparams_.max_iter);
+
+    if(verbose)
+        std::cout << "iter: " << iter << " mse: " << mse << " gamma: " << gamma << " mu: " << tparams_.mu << " grad: " << grad << std::endl;
 }
 
 matrix_t neural_net::get_activation() 
