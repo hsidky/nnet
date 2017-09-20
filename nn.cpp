@@ -10,7 +10,7 @@
 
 using namespace Eigen;
 
-neural_net::neural_net(Eigen::VectorXi& topology) 
+neural_net::neural_net(VectorXi& topology) 
 {
     assert(topology.size()>1);
     init_layers(topology);
@@ -26,7 +26,7 @@ neural_net::neural_net(const char* filename)
         // number of layers
         int num_layers;
         file >> num_layers; 
-        Eigen::VectorXi topology(num_layers);
+        VectorXi topology(num_layers);
         
         // topology
         for(int i = 0; i < topology.size(); ++i)
@@ -53,7 +53,7 @@ neural_net::neural_net(const char* filename)
     file.close();
 }
 
-void neural_net::init_layers(Eigen::VectorXi& topology) 
+void neural_net::init_layers(VectorXi& topology) 
 {
     // init input layer
     nparam_ = 0; 
@@ -210,7 +210,7 @@ void neural_net::train(const matrix_t& X, const matrix_t& Y, bool verbose)
             set_wb(optwb);
             mse2 = loss(X, Y);
             tse2 = beta*mse2 + alpha*wse2;
-            //std::cout << "       wse2: " << wse2 << " mse2: " << mse2 << " tse2: " << tse2 << " mu: " << tparams_.mu <<  std::endl;                        
+            
             // Exit loop or reset values.
             if(tse2 < tse || tparams_.mu > tparams_.mu_max)
                 break;
@@ -220,7 +220,7 @@ void neural_net::train(const matrix_t& X, const matrix_t& Y, bool verbose)
                 mse2 = loss(X, Y);
                 tparams_.mu *= tparams_.mu_scale;           
             }
-        }while(true);
+        } while(true);
 
         wb = optwb;
         mse = mse2; wse = wse2;
@@ -235,7 +235,7 @@ void neural_net::train(const matrix_t& X, const matrix_t& Y, bool verbose)
         if(tparams_.mu < 1.e-20) tparams_.mu = 1.e-20;
 
         ++iter;        
-    }while(tparams_.mu < tparams_.mu_max && grad > tparams_.min_grad && iter <= tparams_.max_iter && !std::isnan(grad) && !std::isnan(gamma));
+    } while(tparams_.mu < tparams_.mu_max && grad > tparams_.min_grad && iter <= tparams_.max_iter && !std::isnan(grad) && !std::isnan(gamma));
 
     if(verbose)
         std::cout << "iter: " << iter << " mse: " << mse << " gamma: " << gamma << " mu: " << tparams_.mu << " grad: " << grad << std::endl;
@@ -261,13 +261,10 @@ matrix_t neural_net::get_gradient(int index)
 matrix_t neural_net::activation(const matrix_t& x)  
 {
     return (2.*((-2.*x).array().exp() + 1.0).inverse() - 1.0).matrix();
-    //return ((-x).array().exp() + 1.0).inverse().matrix();
-    return x.array().tanh().matrix();
 }
 
 matrix_t neural_net::activation_gradient(const matrix_t& x) 
 {
-    //return x.cwiseProduct((1.0-x.array()).matrix());
     return (1.0-x.array().square()).matrix();
 }
 
@@ -320,19 +317,11 @@ void neural_net::autoscale(const matrix_t& X, const matrix_t& Y)
     assert(layers_.back().size == Y.cols());
     assert(X.rows() == Y.rows());
     
-    // compute the mean of the input data
-    x_shift_ = X.colwise().mean();
-    
-    // compute the standard deviation of the input data
-    x_scale_ = (X.rowwise() - x_shift_.transpose()).array().square().colwise().mean().array().sqrt().inverse();
-    for (size_t i = 0; i < x_scale_.size(); ++i) if (x_scale_(i) > 10e9) x_scale_(i) = 1;
-    
-    // compute the minimum target values
-    y_shift_ = Y.colwise().minCoeff();
-    
-    // compute the maximum shifted target values
-    y_scale_ = (Y.colwise().maxCoeff() - y_shift_.transpose()).array().inverse();
-    for (size_t i = 0; i < y_scale_.size(); ++i) if (y_scale_(i) > 10e9) y_scale_(i) = 1;
+    x_shift_ = 0.5*(X.colwise().minCoeff().array() + X.colwise().maxCoeff().array());
+    x_scale_ = 2.0*(X.colwise().maxCoeff() - X.colwise().minCoeff()).array().inverse();
+
+    y_shift_ = 0.5*(Y.colwise().minCoeff().array() + Y.colwise().maxCoeff().array());
+    y_scale_ = 2.0*(Y.colwise().maxCoeff() - Y.colwise().minCoeff()).array().inverse();
 }
 
 void neural_net::autoscale_reset() 
@@ -349,8 +338,11 @@ bool neural_net::write(const char* filename)
     std::ofstream file(filename, std::ios::out);
     
     // write everything to disk
-    if (file) 
+    if(file) 
     {
+        file.precision(16);
+        file << std::scientific;
+
         // number of layers
         file << static_cast<int>(layers_.size()) << std::endl;
 
