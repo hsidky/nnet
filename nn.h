@@ -17,8 +17,8 @@ struct nn_layer
 {
     size_t size;
     matrix_t a, z, delta;
-    matrix_t W, dEdW, DeltaW;
-    vector_t b, dEdb, Delab;
+    matrix_t W, dEdW, DeltaW, dEdb;
+    vector_t b, Delab;
 };
 
 class neural_net 

@@ -7,6 +7,8 @@
 
 #include "nn.h"
 
+using namespace Eigen;
+
 neural_net::neural_net(Eigen::VectorXi& topology) 
 {
     assert(topology.size()>1);
@@ -106,12 +108,13 @@ F_TYPE neural_net::loss(const matrix_t& X, const matrix_t& Y)
     assert(layers_.back().size == Y.cols());
     assert(X.rows() == Y.rows());
     
-    // number of samples
+    // number of samples and output dim. 
     size_t Q = X.rows();
+    size_t S = Y.cols();
     
     // Resize jacobian. 
     je_.resize(nparam_);
-    j_.resize(Q, nparam_);
+    j_.resize(S*Q, nparam_);
     
     // MSE. 
     F_TYPE mse = 0.;
@@ -125,34 +128,46 @@ F_TYPE neural_net::loss(const matrix_t& X, const matrix_t& Y)
         matrix_t error = layers_.back().a*y_scale_.asDiagonal().inverse() - (Y.row(k) - y_shift_.transpose());
         
         // Compute loss. 
-        mse += error.rowwise().squaredNorm().mean()/X.cols();
+        mse += error.rowwise().squaredNorm().mean()/S;
         
         // Number of layers. 
         size_t m = layers_.size();
 
         // Compute sensitivities. 
         size_t j = nparam_;
-        layers_[m-1].delta = error*y_scale_.asDiagonal().inverse();
-        layers_[m-1].dEdW = (layers_[m-1].delta.transpose() * layers_[m-2].a);
-        layers_[m-1].dEdb = layers_[m-1].delta.colwise().sum().transpose();
-
+        layers_[m-1].delta = y_scale_.asDiagonal().inverse();
+        layers_[m-1].dEdW = layers_[m-1].delta;
+        layers_[m-1].dEdb = layers_[m-1].delta;
         // Pack gradient.
         j -= layers_[m-1].W.size();
-        je_.segment(j, layers_[m-1].W.size()) = layers_[m-1].dEdW;
+        
+        for(size_t p = 0; p < S; ++p)
+            j_.block(S*k+p, j, 1, layers_[m-1].W.size()) = (layers_[m-1].delta.col(p)*layers_[m-2].a).transpose();
+
+        //je_.segment(j, layers_[m-1].W.size()) = layers_[m-1].dEdW;
+    
         j -= layers_[m-1].b.size();
-        je_.segment(j, layers_[m-1].b.size()) = layers_[m-1].dEdb;
+        j_.block(S*k, j, S, layers_[m-1].b.size()) = layers_[m-1].dEdb;        
+        //je_.segment(j, layers_[m-1].b.size()) = layers_[m-1].dEdb;
 
         for(size_t i = layers_.size() - 2; i > 0; --i)
         {
-            layers_[i].delta = (layers_[i+1].delta*layers_[i+1].W).cwiseProduct(activation_gradient(layers_[i].a));
-            layers_[i].dEdW = layers_[i].delta.transpose()*layers_[i-1].a;
-            layers_[i].dEdb = layers_[i].delta.colwise().sum().transpose();
+            //layers_[i].delta = (layers_[i+1].delta*layers_[i+1].W).cwiseProduct(activation_gradient(layers_[i].a));
+            layers_[i].delta = activation_gradient(layers_[i].a).asDiagonal()*layers_[i+1].W.transpose()*layers_[i+1].delta;
+            layers_[i].dEdW = layers_[i].delta;
+            layers_[i].dEdb = layers_[i].delta;
 
             // Pack gradient.
             j -= layers_[i].W.size();
-            je_.segment(j, layers_[i].W.size()) = layers_[i].dEdW;
+            for(size_t p = 0; p < S; ++p)
+            {
+                
+                j_.block(S*k+p, j, 1, layers_[i].W.size()) = (layers_[i].delta.col(p)*layers_[i-1].a);
+            }
+            // je_.segment(j, layers_[i].W.size()) = layers_[i].dEdW;
             j -= layers_[i].b.size();
-            je_.segment(j, layers_[i].b.size()) = layers_[i].dEdb;
+            j_.block(S*k, j, S, layers_[i].b.size()) = layers_[i].dEdb.transpose();
+            // je_.segment(j, layers_[i].b.size()) = layers_[i].dEdb;
         }
     }
     std::cout << j_.transpose()*j_ << std::endl;
