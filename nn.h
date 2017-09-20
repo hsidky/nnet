@@ -4,7 +4,7 @@
 #ifndef __NN_H__
 #define __NN_H__
 
-#define f_type double
+#define f_type float
 
 #include <Eigen/Core>
 #include <vector>
@@ -23,7 +23,7 @@ struct nn_layer
 
 struct train_param
 {
-    double mu, mu_max, mu_scale, min_grad;
+    f_type mu, mu_max, mu_scale, min_grad;
     int max_iter;
 };
 

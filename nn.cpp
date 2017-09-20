@@ -4,9 +4,8 @@
 #include <iostream>
 #include <fstream>
 #include <assert.h>
+#include <cmath>
 #include <Eigen/Dense>
-#include <Eigen/Cholesky>
-
 #include "nn.h"
 
 using namespace Eigen;
@@ -89,11 +88,11 @@ void neural_net::forward_pass(const matrix_t& X)
     assert(layers_.front().size == X.cols());
     
     // copy and scale data matrix
-    layers_[0].a = (X.rowwise() - x_shift_.transpose())*x_scale_.asDiagonal();
+    layers_[0].a.noalias() = (X.rowwise() - x_shift_.transpose())*x_scale_.asDiagonal();
     for (int i = 1; i < layers_.size(); ++i)
     {
         // compute input for current layer
-        layers_[i].z = layers_[i-1].a * layers_[i].W.transpose();
+        layers_[i].z.noalias() = layers_[i-1].a * layers_[i].W.transpose();
         
         // add bias
         layers_[i].z.rowwise() += layers_[i].b.transpose(); 
@@ -144,7 +143,7 @@ f_type neural_net::loss(const matrix_t& X, const matrix_t& Y)
         j -= layers_[m-1].W.size();
         for(size_t p = 0; p < S; ++p)
         {
-            layers_[m-1].dEdW = (layers_[m-1].delta.col(p)*layers_[m-2].a);
+            layers_[m-1].dEdW.noalias() = (layers_[m-1].delta.col(p)*layers_[m-2].a);
             j_.block(S*k+p, j, 1, layers_[m-1].W.size()) = Map<vector_t>(layers_[m-1].dEdW.data(), layers_[m-1].dEdW.size()).transpose();
         }
     
@@ -153,13 +152,13 @@ f_type neural_net::loss(const matrix_t& X, const matrix_t& Y)
 
         for(size_t i = layers_.size() - 2; i > 0; --i)
         {
-            layers_[i].delta = activation_gradient(layers_[i].a).asDiagonal()*layers_[i+1].W.transpose()*layers_[i+1].delta;
+            layers_[i].delta.noalias() = activation_gradient(layers_[i].a).asDiagonal()*layers_[i+1].W.transpose()*layers_[i+1].delta;
 
             // Pack Jacobian.
             j -= layers_[i].W.size();
             for(size_t p = 0; p < S; ++p)
             {
-                layers_[i].dEdW = (layers_[i].delta.col(p)*layers_[i-1].a);            
+                layers_[i].dEdW.noalias() = (layers_[i].delta.col(p)*layers_[i-1].a);            
                 j_.block(S*k+p, j, 1, layers_[i].W.size()) = Map<vector_t>(layers_[i].dEdW.data(), layers_[i].dEdW.size()).transpose();
             }
 
@@ -168,10 +167,10 @@ f_type neural_net::loss(const matrix_t& X, const matrix_t& Y)
         }
     }
 
-    jj_ = j_.transpose()*j_;
+    jj_.noalias() = j_.transpose()*j_;
     jj_ /= (Q*S);
     j_ /= (Q*S);
-    je_ = j_.transpose()*error;
+    je_.noalias() = j_.transpose()*error;
     return mse/Q;
 }
 
@@ -189,7 +188,7 @@ void neural_net::train(const matrix_t& X, const matrix_t& Y, bool verbose)
     // Initialize Bayesian regularization parameters.
     f_type gamma = nparam_;
     f_type beta = 0.5*(nex - gamma)/mse;
-    beta = beta <= 0 ? 1 : beta;
+    beta = beta <= 0 ? 1. : beta;
     f_type alpha = 0.5*gamma/wse;
     f_type tse = beta*mse + alpha*wse;
     f_type grad = 2.*std::sqrt(je_.squaredNorm());
@@ -202,35 +201,41 @@ void neural_net::train(const matrix_t& X, const matrix_t& Y, bool verbose)
     {
         if(verbose)
             std::cout << "iter: " << iter << " mse: " << mse << " gamma: " << gamma << " mu: " << tparams_.mu << " grad: " << grad << std::endl;
-
-            // Update LM and Bayesian params. 
-        tparams_.mu /= tparams_.mu_scale;
-        if(tparams_.mu < 1.e-20) tparams_.mu = 1.e-20;
-
+        
         do
         {
-            tparams_.mu *= tparams_.mu_scale;
             // Compute new weights and performance.
             optwb = wb - (beta*jj_ + (tparams_.mu + alpha)*eye).ldlt().solve(beta*je_ + alpha*wb);
             wse2 = optwb.transpose()*optwb;
             set_wb(optwb);
             mse2 = loss(X, Y);
             tse2 = beta*mse2 + alpha*wse2;
-        }while(tse2 >= tse && tparams_.mu < tparams_.mu_max);
+            //std::cout << "       wse2: " << wse2 << " mse2: " << mse2 << " tse2: " << tse2 << " mu: " << tparams_.mu <<  std::endl;                        
+            // Exit loop or reset values.
+            if(tse2 < tse || tparams_.mu > tparams_.mu_max)
+                break;
+            else
+            {
+                set_wb(wb);
+                mse2 = loss(X, Y);
+                tparams_.mu *= tparams_.mu_scale;           
+            }
+        }while(true);
 
         wb = optwb;
         mse = mse2; wse = wse2;
         gamma = (f_type)nparam_ - alpha*(beta*jj_ + alpha*eye).inverse().trace();
-        beta = mse == 0 ? 1. : 0.5*(nex - gamma)/mse;
+        beta = mse == 0 ? 1. : 0.5*((f_type)nex - gamma)/mse;
         alpha = wse == 0 ? 1. : 0.5*gamma/wse;
         tse = beta*mse + alpha*wse;
         grad = 2.*std::sqrt(je_.squaredNorm());
-        tparams_.mu /= tparams_.mu_scale;
+        
+        if(tparams_.mu < tparams_.mu_max)
+            tparams_.mu /= tparams_.mu_scale;
         if(tparams_.mu < 1.e-20) tparams_.mu = 1.e-20;
 
-
         ++iter;        
-    }while(tparams_.mu < tparams_.mu_max && grad > tparams_.min_grad && iter <= tparams_.max_iter);
+    }while(tparams_.mu < tparams_.mu_max && grad > tparams_.min_grad && iter <= tparams_.max_iter && !std::isnan(grad) && !std::isnan(gamma));
 
     if(verbose)
         std::cout << "iter: " << iter << " mse: " << mse << " gamma: " << gamma << " mu: " << tparams_.mu << " grad: " << grad << std::endl;
@@ -263,7 +268,7 @@ matrix_t neural_net::activation(const matrix_t& x)
 matrix_t neural_net::activation_gradient(const matrix_t& x) 
 {
     //return x.cwiseProduct((1.0-x.array()).matrix());
-    return (1.0-x.array()*x.array()).matrix();
+    return (1.0-x.array().square()).matrix();
 }
 
 void neural_net::set_wb(const vector_t& wb)
