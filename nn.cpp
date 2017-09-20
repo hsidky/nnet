@@ -198,6 +198,49 @@ matrix_t neural_net::activation_gradient(const matrix_t& x)
     return (1.0-x.array()*x.array()).matrix();
 }
 
+void neural_net::set_wb(const vector_t& wb)
+{
+    int k = 0;
+    for (int i = 1; i < layers_.size(); ++i) 
+    {
+        auto& layer = layers_[i];
+        for(int j = 0; j < layer.b.size(); ++j)
+        {
+            layer.b(j) = wb[k];
+            ++k;
+        }
+
+        for(int j = 0; j < layer.W.size(); ++j)
+        {
+            layer.W(j) = wb[k];
+            ++k;
+        }
+    }
+}
+
+vector_t neural_net::get_wb() const
+{
+    int k = 0;
+    vector_t wb(nparam_);
+    for (int i = 1; i < layers_.size(); ++i) 
+    {
+        auto& layer = layers_[i];
+        for(int j = 0; j < layer.b.size(); ++j)
+        {
+            wb[k] = layer.b(j);
+            ++k;
+        }
+
+        for(int j = 0; j < layer.W.size(); ++j)
+        {
+            wb[k] = layer.W(j);
+            ++k;
+        }
+    }
+
+    return wb;
+}
+
 void neural_net::autoscale(const matrix_t& X, const matrix_t& Y) 
 {
     assert(layers_.front().size == X.cols());

@@ -21,6 +21,12 @@ struct nn_layer
     vector_t b, Delab;
 };
 
+struct train_param
+{
+    double mu, mu_max, mu_scale, min_grad;
+    int max_iter;
+};
+
 class neural_net 
 {
 protected:
@@ -61,7 +67,9 @@ public:
       * Also backpropogates error. 
       */
     F_TYPE loss(const matrix_t& X, const matrix_t& Y);
-    
+
+    bool train(const matrix_t& X, const matrix_t& Y);
+
     /** Return activation of output layer. */
     matrix_t get_activation();
     
@@ -74,9 +82,15 @@ public:
     /** Returns the gradient f'(x) of the logistic function given f(x). */
     static matrix_t activation_gradient(const matrix_t& x);
     
+    /** Set weights and biases. */ 
+    void set_wb(const vector_t& wb);
+
+    /** Get weights and biases. */
+    vector_t get_wb() const; 
+    
     /** Compute autoscale parameters. */
     void autoscale(const matrix_t& X, const matrix_t& Y);
-    
+
     /** Reset autoscale parameters */
     void autoscale_reset();      
     
