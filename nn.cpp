@@ -127,10 +127,10 @@ f_type neural_net::loss(const matrix_t& X, const matrix_t& Y)
         forward_pass(X.row(k));
             
         // compute error
-        error.row(k) = layers_.back().a*y_scale_.asDiagonal().inverse() - (Y.row(k) - y_shift_.transpose());
+        error.segment(k*S, S) = (layers_.back().a*y_scale_.asDiagonal().inverse()).transpose() - (Y.row(k).transpose() - y_shift_);
         
         // Compute loss. 
-        mse += error.row(k).rowwise().squaredNorm().mean()/S;
+        mse += error.segment(k*S, S).transpose().rowwise().squaredNorm().mean()/S;
         
         // Number of layers. 
         size_t m = layers_.size();
@@ -166,7 +166,6 @@ f_type neural_net::loss(const matrix_t& X, const matrix_t& Y)
             j_.block(S*k, j, S, layers_[i].b.size()) = layers_[i].delta.transpose();
         }
     }
-
     jj_.noalias() = j_.transpose()*j_;
     jj_ /= (Q*S);
     j_ /= (Q*S);
