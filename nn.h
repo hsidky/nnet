@@ -15,7 +15,7 @@ namespace nnet
 	struct nn_layer 
 	{
 		size_t size;
-		matrix_t a, z, delta, delta2;
+		matrix_t a, z, delta;
 		matrix_t W, dEdW;
 		vector_t b;
 	};
@@ -58,8 +58,8 @@ namespace nnet
 		/** Read neural net from file. */
 		neural_net(const char* filename);
 
-		/** Initial weights randomly (zero mean, standard deviation sd) . */
-		void init_weights(f_type sd);
+		/** Initial weights */
+		void init_weights();
 		
 		/** Propagate data through the net.
 		*  Rows of X are instances, columns are features. */
@@ -69,8 +69,6 @@ namespace nnet
 		* Also backpropogates error. 
 		*/
 		f_type loss(const matrix_t& X, const matrix_t& Y);
-
-		f_type grad_loss(const matrix_t& X, const matrix_t& Y);
 
 		void train(const matrix_t& X, const matrix_t& Y, bool verbose = false);
 		

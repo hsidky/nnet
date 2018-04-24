@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <cmath>
 #include <Eigen/Dense>
+#include <random>
 #include "nn.h"
 
 using namespace Eigen;
@@ -13,7 +14,7 @@ namespace nnet
     {
         assert(topology.size()>1);
         init_layers(topology);
-        init_weights(0.5);
+        init_weights();
         autoscale_reset();
     }
 
@@ -69,17 +70,28 @@ namespace nnet
             layers_.push_back(l);
             nparam_ += l.W.size() + l.b.size();
         }
-        tparams_ = {0.005, 1.e10, 10.0, 1.e-7, 0, 10};
+        tparams_ = {0.005, 1.e10, 10.0, 1.e-7, 0, 1000};
     }
 
-    void neural_net::init_weights(f_type sd) 
+    void neural_net::init_weights() 
     {
+        std::random_device rd{};
+        std::mt19937 gen{rd()};
+
         for (int i = 1; i < layers_.size(); ++i) 
         {
-            layers_[i].W.setRandom();
-            layers_[i].b.setRandom();
-            layers_[i].W *= sd;
-            layers_[i].b *= sd;
+            f_type beta = 0.7*std::pow(layers_[i].size, 1.0/layers_[i-1].size);
+            f_type range = 2.0;
+            
+            std::uniform_real_distribution<> d{-1, 1};
+            layers_[i].W = layers_[i].W.unaryExpr([&](f_type x){ return d(gen); });
+            layers_[i].W.rowwise().normalize();
+            layers_[i].W *= range*beta;
+
+            if(layers_[i].size == 1)
+                layers_[i].b.setZero();
+            else 
+                layers_[i].b = range*beta*layers_[i].b.unaryExpr([&](f_type x){ return d(gen); });
         }
     }
 
@@ -177,7 +189,7 @@ namespace nnet
     void neural_net::train(const matrix_t& X, const matrix_t& Y, bool verbose)
     {
         // Reset mu.
-        tparams_.mu = 0.005;
+        tparams_.mu = 0.0005;
 
         int nex = X.rows();
         
@@ -245,7 +257,7 @@ namespace nnet
             mse > tparams_.min_loss &&
             !std::isnan(grad) && 
             !std::isnan(gamma));
-    
+
         if(verbose)
             std::cout << "iter: " << iter << " mse: " << mse << " gamma: " << gamma << " mu: " << tparams_.mu << " grad: " << grad << std::endl;
     }
